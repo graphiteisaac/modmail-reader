@@ -3,3 +3,5 @@ version: '3.7'
 services:
   modread:
     build: .
+    ports:
+      - "8087:8087"
