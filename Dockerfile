@@ -8,10 +8,10 @@ COPY go.mod ./
 
 COPY *.go ./
 COPY view ./
-RUN CGO_ENABLED=0 GOOS=linux go build -o /app
+RUN CGO_ENABLED=0 GOOS=linux go build -o /main
 
 FROM gcr.io/distroless/static-debian11
-COPY --from=base /app .
+COPY --from=base /app/main .
 
 EXPOSE 8087
-CMD ["/app", "--app-port", "8087"]
+CMD ["/main", "--app-port", "8087"]
