@@ -14,4 +14,4 @@ FROM gcr.io/distroless/static-debian11
 COPY --from=base /app/main .
 
 EXPOSE 8087
-CMD ["/main", "--app-port", "8087"]
+CMD ["/main", "-host-port", "8087"]
