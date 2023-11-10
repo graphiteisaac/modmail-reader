@@ -7,12 +7,12 @@ WORKDIR /app
 COPY go.mod ./
 
 COPY *.go ./
-COPY view ./
+COPY view ./view
 RUN CGO_ENABLED=0 GOOS=linux go build -o main
 
 FROM gcr.io/distroless/static-debian11
 COPY --from=base /app/main .
-COPY --from=base /app/view/ ./view
+COPY --from=base /app/view ./view
 
 EXPOSE 8087
 CMD ["/main", "-host-port", "8087"]
