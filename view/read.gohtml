@@ -1,0 +1,17 @@
+<ul class="chat no-commands">
+    <li class="control">
+        <button type="button" onclick="document.querySelector('.chat').classList.toggle('no-commands')">Show Commands</button>
+    </li>
+    {{ range $idx, $el := .tokens }}
+        <li class="message" data-type="{{ .Type }}">
+            <div class="user">
+                <span class="username">{{ if eq .User "" }}ModMail{{ else }}{{ .User }}{{ end }}</span>
+                <span class="time">{{ .Time }}</span>
+            </div>
+            <p>{{ .Content }}</p>
+        </li>
+    {{ end }}
+    <li style="display: block; border: 1px solid #2B2D31; border-radius: 5px; padding:2rem 0;margin-bottom:5rem;text-align:center">
+        <span>&mdash; End of Thread &mdash;</span>
+    </li>
+</ul>
