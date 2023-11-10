@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"flag"
 	"fmt"
 	"html/template"
 	"io"
@@ -12,12 +14,22 @@ import (
 )
 
 func main() {
+	port := flag.Int("host-port", 8087, "Port for the application - defaults to 8086.")
+	flag.Parse()
+
 	mux := http.NewServeMux()
 
 	views, err := template.New("app").ParseGlob("view/*.gohtml")
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		b, _ := json.Marshal(map[string]string{"Status": "OK"})
+		w.Write(b)
+	})
 
 	mux.HandleFunc("/read", func(w http.ResponseWriter, r *http.Request) {
 		url := r.FormValue("url")
@@ -123,8 +135,8 @@ func main() {
 		views.ExecuteTemplate(w, "app.gohtml", nil)
 	})
 
-	s := http.Server{Addr: "0.0.0.0:8087", Handler: mux}
+	s := http.Server{Addr: fmt.Sprintf("0.0.0.0:%d", *port), Handler: mux}
 
-	fmt.Println("Server started http://localhost:8087")
+	fmt.Printf("Server started http://localhost:%d\n", *port)
 	s.ListenAndServe()
 }
