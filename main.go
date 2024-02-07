@@ -8,14 +8,84 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"time"
 )
 
+type Message struct {
+	Original string
+	Content  template.HTML
+	Edits    []template.HTML
+}
+
+type Token struct {
+	Time     string
+	Type     string
+	User     string
+	Role     string
+	Color    string
+	Messages []Message
+}
+
+func processMessage(content string) template.HTML {
+
+	content = regexp.MustCompile(`(?:www|https?)[^(\s\n>)]+`).ReplaceAllStringFunc(content, func(str string) string {
+		parsed, err := url.Parse(str)
+
+		if err == nil {
+			// is (probably) a video
+			if func() bool {
+				return strings.HasSuffix(parsed.Path, ".mov") ||
+					strings.HasSuffix(parsed.Path, ".mp4") ||
+					strings.HasSuffix(parsed.Path, ".avi") ||
+					strings.HasSuffix(parsed.Path, ".flv")
+			}() {
+				return ` <div class="video"><video controls><source src="` + str + `" /></video></div> `
+			}
+
+			// is an image
+			if func() bool {
+				return strings.HasSuffix(parsed.Path, ".png") ||
+					strings.HasSuffix(parsed.Path, ".jpeg") ||
+					strings.HasSuffix(parsed.Path, ".jpg") ||
+					strings.HasSuffix(parsed.Path, ".webp") ||
+					strings.HasSuffix(parsed.Path, ".gif")
+			}() {
+				return ` <div class="img"><img src="` + str + `" /></div> `
+			}
+		} else {
+			fmt.Println(err)
+		}
+
+		return ""
+	})
+
+	bold := regexp.MustCompile(`(\*\*)(.+?)(\*\*)`)
+	italic := regexp.MustCompile(`(\*)(.+?)(\*)`)
+	boldItalic := regexp.MustCompile(`(\*\*\*)(.+?)(\*\*\*)`)
+	code := regexp.MustCompile("(`+)(.+?)(`+)")
+
+	content = strings.ReplaceAll(content, "\n", " <br/> ")
+	content = bold.ReplaceAllString(content, "<b>$2</b>")
+	content = italic.ReplaceAllString(content, "<i>$2</i>")
+	content = boldItalic.ReplaceAllString(content, "<b><i>$2</i></b>")
+	content = code.ReplaceAllString(content, "<code>$2</code>")
+
+	return template.HTML(content)
+}
+
 func main() {
 	port := flag.Int("host-port", 8087, "Port for the application - defaults to 8086.")
 	flag.Parse()
+
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("stacktrace from panic: \n" + string(debug.Stack()))
+		}
+	}()
 
 	mux := http.NewServeMux()
 
@@ -32,9 +102,8 @@ func main() {
 	})
 
 	mux.HandleFunc("/read", func(w http.ResponseWriter, r *http.Request) {
-		url := r.FormValue("url")
-
-		resp, err := http.Get(url)
+		modmailURL := r.FormValue("url")
+		resp, err := http.Get(modmailURL)
 		if err != nil {
 			fmt.Println(err)
 		}
@@ -51,28 +120,22 @@ func main() {
 		}
 
 		split := strings.Split(string(body), "\n────────────────\n")
-		//head := split[0]
-		content := []rune(split[1] + "\n[2006-01-02 15:04:05] [END] End of ModMail\n\n")
+		rawContent := []rune(split[1] + "\n[2006-01-02 15:04:05] [END] End of ModMail\n\n")
 
-		type Token struct {
-			Time    string
-			Type    string
-			User    string
-			Content template.HTML
-		}
-
-		tokens := []*Token{}
-
+		tokens := *new([]*Token)
 		row := 0
 		block := 0
-		buf := []rune{}
-		token := &Token{}
+		buf := *new([]rune)
+		token := new(Token)
 
-		for i, c := range content {
+		for i, c := range rawContent {
 			switch c {
 			case '[':
 				continue
 			case ']':
+				if string(buf) == "REPLY DELETED" {
+					// TODO parse the deleted message and place it in chat, maybe with a red background
+				}
 				if block == 0 {
 					t, err := time.Parse("2006-01-02 15:04:05", string(buf))
 					token.Time = t.Format(time.Stamp)
@@ -87,40 +150,66 @@ func main() {
 				buf = []rune{}
 				block++
 			case '\n':
-				if i+1 < len(content) && content[i+1] == '[' {
+				if i+1 < len(rawContent) && rawContent[i+1] == '[' {
 					row++
 					block = 0
 
-					if strings.Contains(string(buf), "The user edited their message") {
-
+					content := string(buf)
+					msg := Message{
+						Content:  template.HTML(""),
+						Edits:    []template.HTML{},
+						Original: string(buf)[1:],
 					}
 
-					bold := regexp.MustCompile(`(\*\*)(.+?)(\*\*)`)
-					italic := regexp.MustCompile(`(\*)(.+?)(\*)`)
-					boldItalic := regexp.MustCompile(`(\*\*\*)(.+?)(\*\*\*)`)
-					code := regexp.MustCompile("(`+)(.+?)(`+)")
+					if strings.Contains(content, "The user edited their message") {
+						afterPos := strings.Index(content, "`A:` ")
+						beforePos := strings.Index(content, "`B:` ")
 
-					cnt := bold.ReplaceAllString(string(buf), "<b>$2</b>")
-					cnt = italic.ReplaceAllString(cnt, "<i>$2</i>")
-					cnt = boldItalic.ReplaceAllString(cnt, "<b><i>$2</i></b>")
-					cnt = strings.ReplaceAll(cnt, "`B:`", "<code class=\"before\">Before:</code>")
-					cnt = strings.ReplaceAll(cnt, "`A:`", "<code class=\"after\">After:</code>")
-					cnt = code.ReplaceAllString(cnt, "<code>$2</code>")
+						beforeContent := content[beforePos+len("`B:` ") : afterPos-1]
+						for _, str := range regexp.MustCompile(`(?:www|https?)[^(\s|\n)]+`).FindAllString(beforeContent, -1) {
+							strings.ReplaceAll(beforeContent, str, "<"+str+">")
+						}
 
-					cnt = regexp.MustCompile(`(?i)(https?:\/\/.*\.(?:png|jpg|webp|jpeg|gif))\??(?:&?[^=&]*=[^=&]*)*([^\s]+)`).ReplaceAllString(cnt, "<div class=\"img\"><img src=\"$1\" /></div>")
-					cnt = regexp.MustCompile(`(?i)(https?:\/\/.*\.(?:mov|mp4|avi|flv))\??(?:&?[^=&]*=[^=&]*)*([^\s]+)`).ReplaceAllString(cnt, "<div class=\"video\"><video controls> <source src=\"$1\" /></video></div>")
+						for _, t := range tokens {
+							for _, m := range t.Messages {
+								if beforeContent == m.Original {
+									m.Edits = append(m.Edits, template.HTML(content))
+									//m.Content = processMessage(content[afterPos+len("`A:` "):])
+								}
+							}
+						}
 
-					cnt = strings.ReplaceAll(cnt, "\n", "<br/>")
-					token.Content = template.HTML(cnt)
-					tokens = append(tokens, token)
+						continue
+					}
+
+					if token.Type == "TO USER" {
+						role := regexp.MustCompile(`^ \(.*?\) `).FindString(content)
+						token.Role = role[2 : len(role)-2]
+
+						content = content[strings.Index(content, token.User+":")+len(token.User+": "):]
+					}
+
+					tokenIndex := len(tokens) - 1
+					if tokenIndex < 0 {
+						tokenIndex = 0
+					}
+
+					msg.Content = processMessage(content)
+
+					if len(tokens) > 0 && tokens[tokenIndex].User == token.User {
+						tokens[tokenIndex].Messages = append(tokens[len(tokens)-1].Messages, msg)
+					} else {
+						token.Messages = append(token.Messages, msg)
+						tokens = append(tokens, token)
+					}
+
 					token = &Token{}
-
 					buf = []rune{}
 				} else {
 					buf = append(buf, '\n')
 				}
 			default:
-				if i+1 < len(content) && content[i+1] != '[' {
+				if i+1 < len(rawContent) && rawContent[i+1] != '[' {
 					buf = append(buf, c)
 				}
 			}

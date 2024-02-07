@@ -5,10 +5,17 @@
     {{ range $idx, $el := .tokens }}
         <li class="message" data-type="{{ .Type }}">
             <div class="user">
-                <span class="username">{{ if eq .User "" }}ModMail{{ else }}{{ .User }}{{ end }}</span>
+                <span class="username">{{ if eq .User "" }}ModMail{{ else }}{{ .User }}{{ end }}{{ if ne .Role "" }} ({{ .Role }}){{ end }}</span>
                 <span class="time">{{ .Time }}</span>
             </div>
-            <p>{{ .Content }}</p>
+            <div class="messages">
+                {{ range $msg := .Messages }}
+                    <p>{{ .Content }}</p>
+                    {{ if .Edits }}
+                        <p class="edit">{{ . }}</p>
+                    {{ end }}
+                {{ end }}
+            </div>
         </li>
     {{ end }}
     <li style="display: block; border: 1px solid #2B2D31; border-radius: 5px; padding:2rem 0;margin-bottom:5rem;text-align:center">
