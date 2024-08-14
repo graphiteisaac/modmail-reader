@@ -273,3 +273,14 @@ img, video {
 .message:hover .hash {
     opacity: 1;
 }
+
+footer {
+    text-align: center;
+    padding: 0 0 2rem;
+    font-size: 17px;
+    color: var(--text-sub);
+}
+
+footer a {
+    color: var(--text-hl);
+}

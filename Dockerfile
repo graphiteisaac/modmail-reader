@@ -7,6 +7,7 @@ WORKDIR /app
 COPY go.mod ./
 
 COPY *.go ./
+COPY static ./static
 COPY view ./view
 RUN CGO_ENABLED=0 GOOS=linux go build -o main
 
