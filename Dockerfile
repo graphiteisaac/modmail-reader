@@ -13,6 +13,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o main
 
 FROM gcr.io/distroless/static-debian11
 COPY --from=base /app/main .
+COPY --from=base /app/static ./static
 COPY --from=base /app/view ./view
 
 EXPOSE 8087
