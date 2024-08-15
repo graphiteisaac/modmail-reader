@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"html/template"
@@ -12,9 +13,21 @@ import (
 	"net/url"
 	"regexp"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 )
+
+var usernameColours = []string{
+	"red",
+	"orange",
+	"yellow",
+	"green",
+	"sky",
+	"blurple",
+	"violet",
+	"shell",
+}
 
 func main() {
 	port := flag.Int("host-port", 8087, "Port for the application - defaults to 8087.")
@@ -37,7 +50,7 @@ func main() {
 
 	if *dev {
 		mux.HandleFunc("/debug", func(w http.ResponseWriter, r *http.Request) {
-			modmail, err := retrieveModmail(r.FormValue("url"))
+			modmail, err := retrieveModmail(r.FormValue("t"))
 			if err != nil {
 				_, _ = w.Write([]byte(`<div class="error">` + err.Error() + `</div>`))
 				return
@@ -49,9 +62,8 @@ func main() {
 				return
 			}
 
-
-            w.Header().Set("Content-Type", "application/json")
-            json.NewEncoder(w).Encode(map[string]any{
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
 				"info":   info,
 				"tokens": tokens,
 			})
@@ -88,19 +100,19 @@ type Token struct {
 }
 
 type ThreadServer struct {
-	ServerName string
-	Nickname   string
-	Joined     string
-	Roles      []string
+	Name     string
+	Nickname string
+	Joined   string
+	Roles    []string
 }
 
 type ThreadInfo struct {
 	UserID     string
 	Username   string
-	AccountAge time.Time
+	AccountAge string
 	NumThreads int
-	Opened     time.Time
-	Servers    []ThreadServer
+	Opened     string 
+	Servers    []*ThreadServer
 }
 
 type Ctx struct {
@@ -140,7 +152,7 @@ func (c *Ctx) healthcheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Ctx) read(w http.ResponseWriter, r *http.Request) {
-	modmail, err := retrieveModmail(r.FormValue("url"))
+	modmail, err := retrieveModmail(r.FormValue("t"))
 	if err != nil {
 		_, _ = w.Write([]byte(`<div class="error">` + err.Error() + `</div>`))
 		return
@@ -165,7 +177,7 @@ func recovery() {
 }
 
 func processMessage(content string) template.HTML {
-    content = strings.TrimSpace(content)
+	content = strings.TrimSpace(content)
 
 	content = regexp.MustCompile(`(?:www|https?)[^(\s\n>)]+`).ReplaceAllStringFunc(content, func(str string) string {
 		parsed, err := url.Parse(str)
@@ -229,11 +241,71 @@ func retrieveModmail(url string) (string, error) {
 	return string(body), nil
 }
 
-func tokeniseInfo(info []rune) (*ThreadInfo, error) {
-	return nil, nil
+func tokeniseInfoServer(servers []string, threads []*ThreadServer) ([]*ThreadServer, error) {
+	if len(servers) == 0 {
+		return threads, nil
+	}
+
+	// I don't really like using regex, but man, it works
+	//server := regexp.MustCompile(`\*\*\[(.*)\]\*\* NICKNAME \*\*(.*)\*\*, JOINED \*\*(.*)\*\* ago, ROLES \*\*(.*)\*\*`).FindAllStringSubmatch(servers[len(servers)-1], -1)[0]
+    server := regexp.MustCompile(`\*\*\[(.*)\]\*\* NICKNAME \*\*(.*)\*\*, JOINED \*\*(.*)\*\* ago, ROLES \*\*(.*)\*\*`).FindAllStringSubmatch("**[Overwatch 2]** NICKNAME **isaac 🦐🎉🎂🌿**, JOINED **2 years, 10 months** ago, ROLES **Regular, Moderator Perms, Moderator, Veteran, 👤 He/Him, Package Size, Helix Yellow, Staff**", -1)[0]
+
+
+	if len(server) < 3 {
+		return nil, errors.New("One or more servers didn't parse correctly")
+	}
+
+	threads = append(threads, &ThreadServer{
+		Name:     server[1],
+		Nickname: server[2],
+		Joined:   server[3],
+		Roles:    strings.Split(server[4], ", "),
+	})
+
+	return tokeniseInfoServer(servers[:len(servers)-2], threads)
 }
 
-func tokeniseThread(thread []rune, block int, buffer []rune, token *Token, tokens []*Token) ([]*Token, error) {
+func tokeniseInfo(info string) (*ThreadInfo, error) {
+	lines := strings.Split(info, "\n")
+
+	line1 := regexp.MustCompile(`with (.*) \((\d*)\) started at (.*). All times`).FindAllStringSubmatch(lines[0], -1)[0]
+
+	opened, err := time.Parse(time.DateTime, line1[3])
+	if err != nil {
+		return nil, err
+	}
+
+	accountAge := regexp.MustCompile(`ACCOUNT AGE \*\*(.*)\*\*, ID`).FindAllStringSubmatch(lines[2], 1)[0][1]
+
+	serverLines := lines[2:]
+	numOpened := 0
+
+	if lines[len(lines)-2] == "" {
+		serverLines = lines[2 : len(lines)-2]
+		parsedOpened, err := strconv.Atoi(regexp.MustCompile(`has \*\*(.*)\*\* previous`).FindAllStringSubmatch(lines[len(lines)-1], -1)[0][1])
+		if err != nil {
+			return nil, err
+		}
+
+		numOpened = parsedOpened
+	}
+
+	servers, err := tokeniseInfoServer(serverLines, []*ThreadServer{})
+	if err != nil {
+		return nil, err
+	}
+
+	return &ThreadInfo{
+		UserID:     line1[2],
+		Username:   line1[1],
+		AccountAge: accountAge,
+		Opened:     opened.Format(time.Stamp),
+		NumThreads: numOpened,
+		Servers:    servers,
+	}, nil
+}
+
+func tokeniseThread(thread []rune, block int, buffer []rune, unamecolours map[string]string, token *Token, tokens []*Token) ([]*Token, error) {
 	if len(thread) == 0 {
 		return tokens, nil
 	}
@@ -253,6 +325,11 @@ func tokeniseThread(thread []rune, block int, buffer []rune, token *Token, token
 		case 1:
 			token.Type = string(buffer)
 		case 2:
+            if _, ok := unamecolours[strings.ToLower(string(buffer))]; !ok {
+                unamecolours[strings.ToLower(string(buffer))] = usernameColours[len(unamecolours) % 7]
+            }
+
+            token.Color = unamecolours[strings.ToLower(string(buffer))]
 			token.User = string(buffer)
 		}
 
@@ -271,7 +348,7 @@ func tokeniseThread(thread []rune, block int, buffer []rune, token *Token, token
 		msg := Message{
 			Content:  template.HTML(""),
 			Edits:    []template.HTML{},
-			Original: string(buffer[1:]),
+			Original: strings.TrimSpace(string(buffer)),
 		}
 
 		if strings.Contains(content, "The user edited their message") {
@@ -314,7 +391,7 @@ func tokeniseThread(thread []rune, block int, buffer []rune, token *Token, token
 			tokenIndex = 0
 		}
 
-        msg.Content = processMessage(content)
+		msg.Content = processMessage(content)
 
 		if len(tokens) > 0 && tokens[tokenIndex].User == token.User && tokens[tokenIndex].Type == token.Type {
 			tokens[tokenIndex].Messages = append(tokens[len(tokens)-1].Messages, msg)
@@ -331,7 +408,7 @@ func tokeniseThread(thread []rune, block int, buffer []rune, token *Token, token
 		}
 	}
 
-	return tokeniseThread(thread[1:], block, buffer, token, tokens)
+	return tokeniseThread(thread[1:], block, buffer, unamecolours, token, tokens)
 }
 
 func parseModmail(thread string) (*ThreadInfo, []*Token, error) {
@@ -340,14 +417,12 @@ func parseModmail(thread string) (*ThreadInfo, []*Token, error) {
 		return nil, nil, fmt.Errorf("Modmail thread is not formatted correctly")
 	}
 
-	content := split[1] + "\n[2006-01-02 15:04:05] [END] End of ModMail\n\n"
-
-	tokenisedInfo, err := tokeniseInfo([]rune(split[0]))
+	tokenisedInfo, err := tokeniseInfo(split[0])
 	if err != nil {
 		return nil, nil, err
 	}
 
-	tokenisedThread, err := tokeniseThread([]rune(content), 0, []rune{}, &Token{}, []*Token{})
+	tokenisedThread, err := tokeniseThread([]rune(split[1] + "\n"), 0, []rune{}, map[string]string{}, &Token{}, []*Token{})
 	if err != nil {
 		return nil, nil, err
 	}
