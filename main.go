@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"html/template"
@@ -17,6 +18,7 @@ import (
 
 func main() {
 	port := flag.Int("host-port", 8087, "Port for the application - defaults to 8087.")
+	dev := flag.Bool("dev", false, "Development mode - enables debug route")
 	flag.Parse()
 
 	// Handle recovering from panics
@@ -33,8 +35,30 @@ func main() {
 		views,
 	}
 
+	if *dev {
+		mux.HandleFunc("/debug", func(w http.ResponseWriter, r *http.Request) {
+			modmail, err := retrieveModmail(r.FormValue("url"))
+			if err != nil {
+				_, _ = w.Write([]byte(`<div class="error">` + err.Error() + `</div>`))
+				return
+			}
 
-    mux.HandleFunc("/app.css", c.serveCSS)
+			info, tokens, err := parseModmail(modmail)
+			if err != nil {
+				_, _ = w.Write([]byte(`<div class="error">` + err.Error() + `</div>`))
+				return
+			}
+
+
+            w.Header().Set("Content-Type", "application/json")
+            json.NewEncoder(w).Encode(map[string]any{
+				"info":   info,
+				"tokens": tokens,
+			})
+		})
+	}
+
+	mux.HandleFunc("/app.css", c.serveCSS)
 	mux.HandleFunc("/health", c.healthcheck)
 	mux.HandleFunc("/read", c.read)
 	mux.HandleFunc("/", c.homepage)
@@ -54,13 +78,29 @@ type Message struct {
 }
 
 type Token struct {
-	Time     string
-	Type     string
-	User     string
-	Role     string
-	Color    string
-    Anonymous bool
-	Messages []Message
+	Time      string
+	Type      string
+	User      string
+	Role      string
+	Color     string
+	Anonymous bool
+	Messages  []Message
+}
+
+type ThreadServer struct {
+	ServerName string
+	Nickname   string
+	Joined     string
+	Roles      []string
+}
+
+type ThreadInfo struct {
+	UserID     string
+	Username   string
+	AccountAge time.Time
+	NumThreads int
+	Opened     time.Time
+	Servers    []ThreadServer
 }
 
 type Ctx struct {
@@ -68,44 +108,54 @@ type Ctx struct {
 }
 
 func (c *Ctx) homepage(w http.ResponseWriter, r *http.Request) {
-    var result bytes.Buffer
+	var result bytes.Buffer
 
-    if len(r.FormValue("t")) > 0 {
-        modmail, err := retrieveModmail(r.FormValue("t"))
-        if err != nil {
-            // TODO: Handle error
-            _, _ = w.Write([]byte(`<div class="error">` + err.Error() + `</div>`))
-        }
+	if len(r.FormValue("t")) > 0 {
+		modmail, err := retrieveModmail(r.FormValue("t"))
+		if err != nil {
+			// TODO: Handle error
+			_, _ = w.Write([]byte(`<div class="error">` + err.Error() + `</div>`))
+		}
 
-        tokens, err := parseModmail(modmail)
-        _ = c.views.ExecuteTemplate(&result, "read.gohtml", map[string][]*Token{"tokens": tokens})
-    }
+		info, tokens, err := parseModmail(modmail)
+		_ = c.views.ExecuteTemplate(&result, "read.gohtml", map[string]any{
+			"info":   info,
+			"tokens": tokens,
+		})
+	}
 
-    _ = c.views.ExecuteTemplate(w, "app.gohtml", map[string]template.HTML{
-        "result": template.HTML(result.String()),
-    })
+	_ = c.views.ExecuteTemplate(w, "app.gohtml", map[string]template.HTML{
+		"result": template.HTML(result.String()),
+	})
 }
 
 func (c *Ctx) serveCSS(w http.ResponseWriter, r *http.Request) {
-    http.ServeFile(w, r, "./static/app.css")
+	http.ServeFile(w, r, "./static/app.css")
 }
 
 func (c *Ctx) healthcheck(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"OK"}`))
+	_, _ = w.Write([]byte(`{"status":"OK"}`))
 }
 
 func (c *Ctx) read(w http.ResponseWriter, r *http.Request) {
 	modmail, err := retrieveModmail(r.FormValue("url"))
 	if err != nil {
-		// TODO: Handle error
 		_, _ = w.Write([]byte(`<div class="error">` + err.Error() + `</div>`))
+		return
 	}
 
-	tokens, err := parseModmail(modmail)
+	info, tokens, err := parseModmail(modmail)
+	if err != nil {
+		_, _ = w.Write([]byte(`<div class="error">` + err.Error() + `</div>`))
+		return
+	}
 
-	_ = c.views.ExecuteTemplate(w, "read.gohtml", map[string][]*Token{"tokens": tokens})
+	_ = c.views.ExecuteTemplate(w, "read.gohtml", map[string]any{
+		"info":   info,
+		"tokens": tokens,
+	})
 }
 
 func recovery() {
@@ -115,6 +165,8 @@ func recovery() {
 }
 
 func processMessage(content string) template.HTML {
+    content = strings.TrimSpace(content)
+
 	content = regexp.MustCompile(`(?:www|https?)[^(\s\n>)]+`).ReplaceAllStringFunc(content, func(str string) string {
 		parsed, err := url.Parse(str)
 		if err != nil {
@@ -143,7 +195,7 @@ func processMessage(content string) template.HTML {
 		}
 
 		return fmt.Sprintf(`<a href="%s">%s</a>`, str, str)
-    })
+	})
 
 	// Line breaks
 	content = strings.ReplaceAll(content, "\n", " <br/> ")
@@ -177,12 +229,16 @@ func retrieveModmail(url string) (string, error) {
 	return string(body), nil
 }
 
-func tokeniseModmail(thread string, block, line int, buffer []rune, token *Token, tokens []*Token) ([]*Token, error) {
+func tokeniseInfo(info []rune) (*ThreadInfo, error) {
+	return nil, nil
+}
+
+func tokeniseThread(thread []rune, block int, buffer []rune, token *Token, tokens []*Token) ([]*Token, error) {
 	if len(thread) == 0 {
 		return tokens, nil
 	}
 
-    switch thread[0] {
+	switch thread[0] {
 	case '[':
 		break
 	case ']':
@@ -193,7 +249,6 @@ func tokeniseModmail(thread string, block, line int, buffer []rune, token *Token
 		switch block {
 		case 0:
 			t, _ := time.Parse("2006-01-02 15:04:05", string(buffer))
-			// TODO: Handle error
 			token.Time = t.Format(time.Stamp)
 		case 1:
 			token.Type = string(buffer)
@@ -202,14 +257,13 @@ func tokeniseModmail(thread string, block, line int, buffer []rune, token *Token
 		}
 
 		buffer = []rune{}
-        block++
+		block++
 	case '\n':
 		if len(thread) > 1 && thread[1] != '[' {
-            buffer = append(buffer, '\n')
-            break
+			buffer = append(buffer, '\n')
+			break
 		}
 
-		line++
 		block = 0
 
 		content := string(buffer)
@@ -242,17 +296,17 @@ func tokeniseModmail(thread string, block, line int, buffer []rune, token *Token
 		}
 
 		if token.Type == "TO USER" {
-            if strings.HasPrefix(content, " (Anonymous)") {
-                split := strings.Split(content, ") ")[1]
+			if strings.HasPrefix(content, " (Anonymous)") {
+				split := strings.Split(content, ") ")[1]
 
-                token.Anonymous = true
-                token.Role = split[:strings.Index(split, ":")]
-                content = split[strings.Index(split, ":")+2:]
-            } else {
-                role := regexp.MustCompile(`^ \(.*?\) `).FindString(content)
-                token.Role = role[2 : len(role)-2]
-                content = content[strings.Index(content, token.User+":")+len(token.User+": "):]
-            }
+				token.Anonymous = true
+				token.Role = split[:strings.Index(split, ":")]
+				content = split[strings.Index(split, ":")+2:]
+			} else {
+				role := regexp.MustCompile(`^ \(.*?\) `).FindString(content)
+				token.Role = role[2 : len(role)-2]
+				content = content[strings.Index(content, token.User+":")+len(token.User+": "):]
+			}
 		}
 
 		tokenIndex := len(tokens) - 1
@@ -260,9 +314,9 @@ func tokeniseModmail(thread string, block, line int, buffer []rune, token *Token
 			tokenIndex = 0
 		}
 
-		msg.Content = processMessage(content)
+        msg.Content = processMessage(content)
 
-		if len(tokens) > 0 && tokens[tokenIndex].User == token.User {
+		if len(tokens) > 0 && tokens[tokenIndex].User == token.User && tokens[tokenIndex].Type == token.Type {
 			tokens[tokenIndex].Messages = append(tokens[len(tokens)-1].Messages, msg)
 		} else {
 			token.Messages = append(token.Messages, msg)
@@ -271,22 +325,32 @@ func tokeniseModmail(thread string, block, line int, buffer []rune, token *Token
 
 		token = &Token{}
 		buffer = []rune{}
-    default:
-        if len(thread) > 0 && thread[1] != '[' {
-            buffer = append(buffer, rune(thread[0]))
-        }
-	} 
-
-    return tokeniseModmail(thread[1:], block, line, buffer, token, tokens)
-}
-
-func parseModmail(thread string) ([]*Token, error) {
-	split := strings.Split(thread, "\n────────────────\n")
-	if len(split) < 2 {
-		return nil, fmt.Errorf("Modmail thread is not formatted correctly")
+	default:
+		if len(thread) > 0 && thread[1] != '[' {
+			buffer = append(buffer, rune(thread[0]))
+		}
 	}
 
-    content := split[1] + "\n[2006-01-02 15:04:05] [END] End of ModMail\n\n"
+	return tokeniseThread(thread[1:], block, buffer, token, tokens)
+}
 
-    return tokeniseModmail(content, 0, 0, []rune{}, &Token{}, []*Token{})
+func parseModmail(thread string) (*ThreadInfo, []*Token, error) {
+	split := strings.Split(thread, "\n────────────────\n")
+	if len(split) < 2 {
+		return nil, nil, fmt.Errorf("Modmail thread is not formatted correctly")
+	}
+
+	content := split[1] + "\n[2006-01-02 15:04:05] [END] End of ModMail\n\n"
+
+	tokenisedInfo, err := tokeniseInfo([]rune(split[0]))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	tokenisedThread, err := tokeniseThread([]rune(content), 0, []rune{}, &Token{}, []*Token{})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return tokenisedInfo, tokenisedThread, nil
 }
