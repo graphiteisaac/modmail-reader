@@ -45,7 +45,7 @@ header {
 
 .controls {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
     grid-gap: .6rem;
     margin-bottom: 2rem;
 }
@@ -56,7 +56,7 @@ header {
 
 @media screen and (min-width: 992px) {
     .controls {
-        grid-template-columns: 1fr auto auto auto;
+        grid-template-columns: 1fr auto auto auto auto;
     }
 
     .controls form {
@@ -194,6 +194,7 @@ form button:hover, form button:focus, .btn:hover, .btn:focus {
 }
 
 .chat.no-commands .message[data-type="COMMAND"] { display: none; }
+.chat.only-user .message:not([data-type*=" USER"]), .chat.only-user .message[data-type*="BOT"] { display: none; }
 
 .loader {
     position: fixed;
