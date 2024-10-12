@@ -18,7 +18,7 @@
         <h1>ModMail Log Reader</h1>
     </header>
     <div class="controls">
-        <form hx-post="/read" hx-on:htmx:xhr:loadend="window.history.replaceState(`${window.location.origin}/?t=${(new FormData(event.target).get('t'))}`)" hx-target="#result" hx-swap="outterHTML" hx-indicator=".loader">
+        <form hx-post="/read" hx-on:htmx:xhr:loadend="window.history.replaceState({}, null, `${window.location.origin}/?t=${(new FormData(event.target).get('t'))}`)" hx-target="#result" hx-swap="outterHTML" hx-indicator=".loader">
             <input type="text" name="t" aria-label="ModMail Thread URL">
             <button type="submit">Read</button>
         </form>

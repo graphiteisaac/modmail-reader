@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"html/template"
@@ -63,7 +62,7 @@ func main() {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"info":   info,
 				"tokens": tokens,
 			})
@@ -72,6 +71,7 @@ func main() {
 
 	mux.HandleFunc("/app.css", c.serveCSS)
 	mux.HandleFunc("/health", c.healthcheck)
+    //mux.HandleFunc("/asset-cross/", c.assets)
 	mux.HandleFunc("/read", c.read)
 	mux.HandleFunc("/", c.homepage)
 
@@ -130,6 +130,11 @@ func (c *Ctx) homepage(w http.ResponseWriter, r *http.Request) {
 		}
 
 		info, tokens, err := parseModmail(modmail)
+        if err != nil {
+            fmt.Println(err)
+            _, _ = w.Write([]byte(`<div class="error">Failed to parse thread</div>`))
+        }
+
 		_ = c.views.ExecuteTemplate(&result, "read.gohtml", map[string]any{
 			"info":   info,
 			"tokens": tokens,
@@ -150,6 +155,17 @@ func (c *Ctx) healthcheck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"status":"OK"}`))
 }
+
+/* func (c *Ctx) assets(w http.ResponseWriter, r *http.Request) {
+    target := r.URL
+    target.Host = "ow.modmails.dragory.net"
+    target.Scheme = "https"
+    target.Path = strings.TrimPrefix(r.URL.Path, "/asset-cross")
+    r.Header.Set("X-Forwarded-Host", r.Header.Get("Host"))
+    
+    proxy := httputil.NewSingleHostReverseProxy(target)
+    proxy.ServeHTTP(w, r)
+} */
 
 func (c *Ctx) read(w http.ResponseWriter, r *http.Request) {
 	modmail, err := retrieveModmail(r.FormValue("t"))
@@ -176,14 +192,19 @@ func recovery() {
 	}
 }
 
-func processMessage(content string) template.HTML {
-	content = strings.TrimSpace(content)
-
-	content = regexp.MustCompile(`(?:www|https?)[^(\s\n>)]+`).ReplaceAllStringFunc(content, func(str string) string {
+func fixAssets(content string) string {
+    return regexp.MustCompile(`(?:www|https?)[^(\s\n>)]+`).ReplaceAllStringFunc(content, func(str string) string {
 		parsed, err := url.Parse(str)
 		if err != nil {
 			return ""
 		}
+
+        /* Not used because CloudFlare doesn't want me to proxy :(
+        if strings.Contains(parsed.Hostname(), "dragory") {
+            parsed.Host = HOST 
+            parsed.Path = "asset-cross" + parsed.Path
+        }
+        */
 
 		// is (probably) a video
 		if func() bool {
@@ -192,7 +213,7 @@ func processMessage(content string) template.HTML {
 				strings.HasSuffix(parsed.Path, ".avi") ||
 				strings.HasSuffix(parsed.Path, ".flv")
 		}() {
-			return ` <div class="video"><video controls><source src="` + str + `" /></video></div> `
+			return ` <div class="video"><video controls><source src="` + parsed.String() + `" /></video></div> `
 		}
 
 		// is an image
@@ -203,12 +224,18 @@ func processMessage(content string) template.HTML {
 				strings.HasSuffix(parsed.Path, ".webp") ||
 				strings.HasSuffix(parsed.Path, ".gif")
 		}() {
-			return ` <div class="img"><img src="` + str + `" /></div> `
+			return ` <div class="img"><img src="` + parsed.String() + `" /></div> `
 		}
 
-		return fmt.Sprintf(`<a href="%s">%s</a>`, str, str)
+		return fmt.Sprintf(`<a href="%s">%s</a>`, parsed.String(), parsed.String())
 	})
+}
 
+func processMessage(content string) template.HTML {
+	content = strings.TrimSpace(content)
+
+    // Image assets
+	content = fixAssets(content)
 	// Line breaks
 	content = strings.ReplaceAll(content, "\n", " <br/> ")
 	// Bold blocks
@@ -246,20 +273,13 @@ func tokeniseInfoServer(servers []string, threads []*ThreadServer) ([]*ThreadSer
 		return threads, nil
 	}
 
+    // **[Overwatch 2]** NICKNAME **isaac**, JOINED **2 years, 10 months** ago, ROLES **Regular, Moderator Perms, Moderator, Veteran, 👤 He/Him**
 	// I don't really like using regex, but man, it works
-	//server := regexp.MustCompile(`\*\*\[(.*)\]\*\* NICKNAME \*\*(.*)\*\*, JOINED \*\*(.*)\*\* ago, ROLES \*\*(.*)\*\*`).FindAllStringSubmatch(servers[len(servers)-1], -1)[0]
-    server := regexp.MustCompile(`\*\*\[(.*)\]\*\* NICKNAME \*\*(.*)\*\*, JOINED \*\*(.*)\*\* ago, ROLES \*\*(.*)\*\*`).FindAllStringSubmatch("**[Overwatch 2]** NICKNAME **isaac 🦐🎉🎂🌿**, JOINED **2 years, 10 months** ago, ROLES **Regular, Moderator Perms, Moderator, Veteran, 👤 He/Him, Package Size, Helix Yellow, Staff**", -1)[0]
-
-
-	if len(server) < 3 {
-		return nil, errors.New("One or more servers didn't parse correctly")
-	}
-
 	threads = append(threads, &ThreadServer{
-		Name:     server[1],
-		Nickname: server[2],
-		Joined:   server[3],
-		Roles:    strings.Split(server[4], ", "),
+        Name:     regexp.MustCompile(`\*\*\[(.*)\]\*\*`).FindStringSubmatch(servers[len(servers)-1])[1],
+		Nickname: regexp.MustCompile(`NICKNAME \*\*(.*)\*\*,`).FindStringSubmatch(servers[len(servers)-1])[1],
+		Joined:   regexp.MustCompile(`JOINED \*\*(.*)\*\* ago`).FindStringSubmatch(servers[len(servers)-1])[1],
+		Roles:    strings.Split(regexp.MustCompile(`ROLES \*\*(.*)\*\*`).FindStringSubmatch(servers[len(servers)-1])[1], ", "),
 	})
 
 	return tokeniseInfoServer(servers[:len(servers)-2], threads)
