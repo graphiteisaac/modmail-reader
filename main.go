@@ -125,7 +125,6 @@ func (c *Ctx) homepage(w http.ResponseWriter, r *http.Request) {
 	if len(r.FormValue("t")) > 0 {
 		modmail, err := retrieveModmail(r.FormValue("t"))
 		if err != nil {
-			// TODO: Handle error
 			_, _ = w.Write([]byte(`<div class="error">` + err.Error() + `</div>`))
 		}
 
@@ -268,21 +267,31 @@ func retrieveModmail(url string) (string, error) {
 	return string(body), nil
 }
 
+func matchServerInfo(regex string, content string, fallback string) string {
+    found := regexp.MustCompile(regex).FindStringSubmatch(content)
+    if len(found) < 2 {
+        return fallback
+    }
+
+    return found[1]
+}
+
 func tokeniseInfoServer(servers []string, threads []*ThreadServer) ([]*ThreadServer, error) {
 	if len(servers) == 0 {
 		return threads, nil
 	}
 
-    // **[Overwatch 2]** NICKNAME **isaac**, JOINED **2 years, 10 months** ago, ROLES **Regular, Moderator Perms, Moderator, Veteran, 👤 He/Him**
+    server := servers[len(servers)-1]
+
 	// I don't really like using regex, but man, it works
 	threads = append(threads, &ThreadServer{
-        Name:     regexp.MustCompile(`\*\*\[(.*)\]\*\*`).FindStringSubmatch(servers[len(servers)-1])[1],
-		Nickname: regexp.MustCompile(`NICKNAME \*\*(.*)\*\*,`).FindStringSubmatch(servers[len(servers)-1])[1],
-		Joined:   regexp.MustCompile(`JOINED \*\*(.*)\*\* ago`).FindStringSubmatch(servers[len(servers)-1])[1],
-		Roles:    strings.Split(regexp.MustCompile(`ROLES \*\*(.*)\*\*`).FindStringSubmatch(servers[len(servers)-1])[1], ", "),
+        Name:     matchServerInfo(`\*\*\[(.*)\]\*\*`, server, "Unknown Server"),
+		Nickname: matchServerInfo(`NICKNAME \*\*(.*)\*\*,`, server, "Unknown User"),
+		Joined:  matchServerInfo(`JOINED \*\*(.*)\*\* ago`, server, "Unknown Join Time"),
+		Roles:  strings.Split(matchServerInfo(`ROLES \*\*(.*)\*\*`, server, ""), ", "),
 	})
 
-	return tokeniseInfoServer(servers[:len(servers)-2], threads)
+	return tokeniseInfoServer(servers[:len(servers)-1], threads)
 }
 
 func tokeniseInfo(info string) (*ThreadInfo, error) {
@@ -310,7 +319,7 @@ func tokeniseInfo(info string) (*ThreadInfo, error) {
 		numOpened = parsedOpened
 	}
 
-	servers, err := tokeniseInfoServer(serverLines, []*ThreadServer{})
+    servers, err := tokeniseInfoServer(serverLines[1:], []*ThreadServer{})
 	if err != nil {
 		return nil, err
 	}

@@ -51,7 +51,7 @@ header {
 }
 
 .controls form {
-    grid-column: 1 / span 3;
+    grid-column: 1 / span 4;
 }
 
 @media screen and (min-width: 992px) {
@@ -311,6 +311,7 @@ footer a {
 
 .thread-title {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
@@ -330,12 +331,20 @@ footer a {
 
 .metadata {
     display: flex;
+    flex-direction: column;
+    gap: 1rem;
     background: var(--bg-darker);
     border-radius: .3rem;
     padding: 1rem;
     justify-content: space-between;
     font-size: 14px;
     font-weight: bold;
+}
+
+@media screen and (min-width: 772px) {
+    .metadata {
+       flex-direction: row;
+    }
 }
 
 .servers {
@@ -355,6 +364,7 @@ footer a {
 
 .server .roles {
     display: flex;
+    align-items: start;
     flex-wrap: wrap;
     gap: .6rem;
 }
