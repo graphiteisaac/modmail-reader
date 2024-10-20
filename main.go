@@ -415,12 +415,19 @@ func tokeniseThread(thread []rune, block int, buffer []rune, unamecolours map[st
 			}
 		}
 
+        if token.Type == "COMMAND" && strings.Contains(content, "!block") {
+            token.Type = "BLOCK"
+        }
+
 		tokenIndex := len(tokens) - 1
 		if tokenIndex < 0 {
 			tokenIndex = 0
 		}
 
 		msg.Content = processMessage(content)
+        if token.Type == "BLOCK" {
+            msg.Content = template.HTML("Blocked from ModMail for " + strings.TrimSpace(strings.ReplaceAll(string(msg.Content), "!block", "")))
+        }
 
 		if len(tokens) > 0 && tokens[tokenIndex].User == token.User && tokens[tokenIndex].Type == token.Type {
 			tokens[tokenIndex].Messages = append(tokens[len(tokens)-1].Messages, msg)

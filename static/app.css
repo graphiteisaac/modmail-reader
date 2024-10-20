@@ -140,6 +140,10 @@ form button:hover, form button:focus, .btn:hover, .btn:focus {
     background: var(--bg-darker);
 }
 
+.chat .message[data-type="BLOCK"] {
+    border: 2px dashed #e60a4c9a;
+}
+
 .before, .error { color: #ea587f }
 .after { color: #71ba22 }
 
