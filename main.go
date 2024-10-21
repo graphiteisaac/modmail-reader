@@ -28,6 +28,14 @@ var usernameColours = []string{
 	"shell",
 }
 
+type Block = int
+var (
+    BlockTime Block = 0
+    BlockType = 1
+    BlockUser = 2
+    BlockContent = 3
+)
+
 func main() {
 	port := flag.Int("host-port", 8087, "Port for the application - defaults to 8087.")
 	dev := flag.Bool("dev", false, "Development mode - enables debug route")
@@ -341,19 +349,28 @@ func tokeniseThread(thread []rune, block int, buffer []rune, unamecolours map[st
 
 	switch thread[0] {
 	case '[':
-		break
+        if block == BlockContent {
+            buffer = append(buffer, '[')
+        }
+
+    	break
 	case ']':
 		if string(buffer) == "REPLY DELETED" {
 			// TODO: Handle deleted replies
 		}
 
+        if block == BlockContent {
+            buffer = append(buffer, ']')
+            break
+        }
+
 		switch block {
-		case 0:
+		case BlockTime:
 			t, _ := time.Parse("2006-01-02 15:04:05", string(buffer))
 			token.Time = t.Format(time.Stamp)
-		case 1:
+		case BlockType:
 			token.Type = string(buffer)
-		case 2:
+		case BlockUser:
             if _, ok := unamecolours[strings.ToLower(string(buffer))]; !ok {
                 unamecolours[strings.ToLower(string(buffer))] = usernameColours[len(unamecolours) % 7]
             }
@@ -365,13 +382,12 @@ func tokeniseThread(thread []rune, block int, buffer []rune, unamecolours map[st
 		buffer = []rune{}
 		block++
 	case '\n':
-		if len(thread) > 1 && thread[1] != '[' {
+        if len(thread) > 23 && !regexp.MustCompile(`\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]`).MatchString(string(thread[1:22])) {
 			buffer = append(buffer, '\n')
-			break
-		}
+            break
+        }
 
 		block = 0
-
 		content := string(buffer)
 
 		msg := Message{
@@ -408,8 +424,13 @@ func tokeniseThread(thread []rune, block int, buffer []rune, unamecolours map[st
 				token.Anonymous = true
 				token.Role = split[:strings.Index(split, ":")]
 				content = split[strings.Index(split, ":")+2:]
-			} else {
+			} else if len(content) > len(token.User) {
 				role := regexp.MustCompile(`^ \(.*?\) `).FindString(content)
+
+                if role == "" {
+                    role = " (Unknown) "
+                }
+
 				token.Role = role[2 : len(role)-2]
 				content = content[strings.Index(content, token.User+":")+len(token.User+": "):]
 			}
